@@ -13,19 +13,28 @@ class CrawlableLinks extends Gatherer {
    * @param {LH.Gatherer.PassContext} passContext
    * @return {Promise<LH.Artifacts['CrawlableLinks']>}
    */
-  afterPass(passContext) {
+  async afterPass(passContext) {
     const expression = `(function() {
       ${pageFunctions.getElementsInDocumentString}; // define function on page
+      const resolveURLOrNull = url => {
+        try { return new URL(url, window.location.href).href; }
+        catch (_) { return null; }
+      };
+
       const selector = 'a[href]:not([rel~="nofollow"])';
       const elements = getElementsInDocument(selector);
       return elements
         .map(node => ({
-          href: node.href,
-          text: node.innerText
+          href: node.href instanceof SVGAnimatedString ?
+            resolveURLOrNull(node.href.baseVal) :
+            node.href,
+          text: node.innerText || '',
         }));
     })()`;
 
-    return passContext.driver.evaluateAsync(expression);
+    /** @type {LH.Artifacts['CrawlableLinks']} */
+    const links = await passContext.driver.evaluateAsync(expression);
+    return links.filter(link => typeof link.href === 'string' && link.href);
   }
 }
 
