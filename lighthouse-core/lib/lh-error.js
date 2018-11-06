@@ -142,6 +142,12 @@ const ERRORS = {
     message: strings.pageLoadFailed,
     lhrRuntimeError: true,
   },
+  /* Used when security error prevents page load. */
+  INSECURE_DOCUMENT_REQUEST: {
+    code: 'INSECURE_DOCUMENT_REQUEST',
+    message: strings.pageLoadFailedInsecure,
+    lhrRuntimeError: true,
+  },
 
   // Protocol internal failures
   TRACING_ALREADY_STARTED: {
@@ -163,17 +169,20 @@ const ERRORS = {
     lhrRuntimeError: true,
   },
 
-  // Protocol timeout failures
-  REQUEST_CONTENT_TIMEOUT: {
-    code: 'REQUEST_CONTENT_TIMEOUT',
-    message: strings.requestContentTimeout,
-  },
-
   // URL parsing failures
   INVALID_URL: {
     code: 'INVALID_URL',
     message: strings.urlInvalid,
   },
+
+  // Protocol timeout failures
+  PROTOCOL_TIMEOUT: {
+    code: 'PROTOCOL_TIMEOUT',
+    message: strings.protocolTimeout,
+    lhrRuntimeError: true,
+  },
+
+  // Hey! When adding a new error type, update lighthouse-result.proto too.
 };
 
 /** @type {Record<keyof typeof ERRORS, LighthouseErrorDefinition>} */

@@ -63,6 +63,12 @@ const UIStrings = {
   a11yMetaGroupTitle: 'Meta Tags Used Properly',
   /* Description of the meta tag section within the Accessibility category. Within this section are audits with descriptive titles that highlight if meta tags on the page have been used properly and if any important ones are missing. */
   a11yMetaGroupDescription: 'These are opportunities to improve the user experience of your site.',
+  /** Title of the Fast and Reliable section of the web app category. Within this section are audits that check if the web site loaded quickly and can reliably load even if the internet connection is very slow or goes offline. */
+  pwaFastReliableGroupTitle: 'Fast and reliable',
+  /** Title of the Installable section of the web app category. Within this section are audits that check if Chrome supports installing the web site as an app on their device. */
+  pwaInstallableGroupTitle: 'Installable',
+  /** Title of the Engaging section of the web app category. Within this section are audits that check if the developer has taken advantage of features to make their web page more enjoyable and engaging for the user. */
+  pwaEngagingGroupTitle: 'Engaging',
 };
 
 const str_ = i18n.createMessageInstanceIdFn(__filename, UIStrings);
@@ -97,7 +103,6 @@ const defaultConfig = {
       'dobetterweb/password-inputs-with-prevented-paste',
       'dobetterweb/response-compression',
       'dobetterweb/tags-blocking-first-paint',
-      'dobetterweb/websql',
       'seo/meta-description',
       'seo/font-size',
       'seo/crawlable-links',
@@ -106,7 +111,6 @@ const defaultConfig = {
       'seo/embedded-content',
       'seo/canonical',
       'seo/robots-txt',
-      'fonts',
     ],
   },
   {
@@ -150,7 +154,6 @@ const defaultConfig = {
     'webapp-install-banner',
     'splash-screen',
     'themed-omnibox',
-    'manifest-short-name-length',
     'content-width',
     'image-aspect-ratio',
     'deprecations',
@@ -161,6 +164,7 @@ const defaultConfig = {
     'font-display',
     'network-requests',
     'metrics',
+    'offline-start-url',
     'manual/pwa-cross-browser',
     'manual/pwa-page-transitions',
     'manual/pwa-each-page-has-url',
@@ -230,7 +234,6 @@ const defaultConfig = {
     'dobetterweb/no-document-write',
     'dobetterweb/no-vulnerable-libraries',
     'dobetterweb/js-libraries',
-    'dobetterweb/no-websql',
     'dobetterweb/notification-on-start',
     'dobetterweb/password-inputs-can-be-pasted-into',
     'dobetterweb/uses-http2',
@@ -259,6 +262,15 @@ const defaultConfig = {
     'diagnostics': {
       title: str_(UIStrings.diagnosticsGroupTitle),
       description: str_(UIStrings.diagnosticsGroupDescription),
+    },
+    'pwa-fast-reliable': {
+      title: str_(UIStrings.pwaFastReliableGroupTitle),
+    },
+    'pwa-installable': {
+      title: str_(UIStrings.pwaInstallableGroupTitle),
+    },
+    'pwa-engaging': {
+      title: str_(UIStrings.pwaEngagingGroupTitle),
     },
     'a11y-color-contrast': {
       title: str_(UIStrings.a11yColorContrastGroupTitle),
@@ -347,27 +359,26 @@ const defaultConfig = {
     },
     'pwa': {
       title: 'Progressive Web App',
-      description: 'These checks validate the aspects of a Progressive Web App, as specified by the baseline [PWA Checklist](https://developers.google.com/web/progressive-web-apps/checklist).',
+      description: 'These checks validate the aspects of a Progressive Web App. [Learn more](https://developers.google.com/web/progressive-web-apps/checklist).',
       manualDescription: 'These checks are required by the baseline ' +
           '[PWA Checklist](https://developers.google.com/web/progressive-web-apps/checklist) but are ' +
           'not automatically checked by Lighthouse. They do not affect your score but it\'s important that you verify them manually.',
       auditRefs: [
-        // Most difficult and critical for good UX
-        {id: 'load-fast-enough-for-pwa', weight: 7}, // can't be green in the category without being fast
-        {id: 'works-offline', weight: 5},
-        // Encompasses most of the other checks
-        {id: 'webapp-install-banner', weight: 3},
-        // Important but not too difficult
-        {id: 'is-on-https', weight: 2},
-        {id: 'redirects-http', weight: 2},
-        {id: 'viewport', weight: 2},
-        // Relatively easy checkboxes to tick with minimal value on their own
-        {id: 'service-worker', weight: 1},
-        {id: 'without-javascript', weight: 1},
-        {id: 'splash-screen', weight: 1},
-        {id: 'themed-omnibox', weight: 1},
-        {id: 'content-width', weight: 1},
-        {id: 'manifest-short-name-length', weight: 0},
+        // Fast and Reliable
+        {id: 'load-fast-enough-for-pwa', weight: 7, group: 'pwa-fast-reliable'},
+        {id: 'works-offline', weight: 5, group: 'pwa-fast-reliable'},
+        {id: 'offline-start-url', weight: 1, group: 'pwa-fast-reliable'},
+        // Installable
+        {id: 'is-on-https', weight: 2, group: 'pwa-installable'},
+        {id: 'service-worker', weight: 1, group: 'pwa-installable'},
+        {id: 'webapp-install-banner', weight: 2, group: 'pwa-installable'},
+        // Engaging
+        {id: 'redirects-http', weight: 2, group: 'pwa-engaging'},
+        {id: 'splash-screen', weight: 1, group: 'pwa-engaging'},
+        {id: 'themed-omnibox', weight: 1, group: 'pwa-engaging'},
+        {id: 'content-width', weight: 1, group: 'pwa-engaging'},
+        {id: 'viewport', weight: 2, group: 'pwa-engaging'},
+        {id: 'without-javascript', weight: 1, group: 'pwa-engaging'},
         // Manual audits
         {id: 'pwa-cross-browser', weight: 0},
         {id: 'pwa-page-transitions', weight: 0},
@@ -432,7 +443,6 @@ const defaultConfig = {
       title: 'Best Practices',
       auditRefs: [
         {id: 'appcache-manifest', weight: 1},
-        {id: 'no-websql', weight: 1},
         {id: 'is-on-https', weight: 1},
         {id: 'uses-http2', weight: 1},
         {id: 'uses-passive-event-listeners', weight: 1},

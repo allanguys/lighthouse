@@ -29,6 +29,8 @@ const DEFAULT_PAUSE_AFTER_LOAD = 0;
 const DEFAULT_NETWORK_QUIET_THRESHOLD = 5000;
 // Controls how long to wait between longtasks before determining the CPU is idle, off by default
 const DEFAULT_CPU_QUIET_THRESHOLD = 0;
+// Controls how long to wait for a response after sending a DevTools protocol command.
+const DEFAULT_PROTOCOL_TIMEOUT = 5000;
 
 /**
  * @typedef {LH.Protocol.StrictEventEmitter<LH.CrdpEvents>} CrdpEventEmitter
@@ -78,50 +80,91 @@ class Driver {
       // properties. See https://github.com/Microsoft/TypeScript/pull/22348.
       this._eventEmitter.emit(event.method, event.params);
     });
+
+    /**
+     * Used for monitoring network status events during gotoURL.
+     * @type {?LH.Crdp.Security.SecurityStateChangedEvent}
+     * @private
+     */
+    this._lastSecurityState = null;
+
+    /**
+     * @type {number}
+     * @private
+     */
+    this._nextProtocolTimeout = DEFAULT_PROTOCOL_TIMEOUT;
   }
 
   static get traceCategories() {
     return [
-      '-*', // exclude default
-      'toplevel',
+      // Exclude default categories. We'll be selective to minimize trace size
+      '-*',
+
+      // Used instead of 'toplevel' in Chrome 71+
+      'disabled-by-default-lighthouse',
+
+      // All compile/execute events are captured by parent events in devtools.timeline..
+      // But the v8 category provides some nice context for only <0.5% of the trace size
+      'v8',
+      // Same situation here. This category is there for RunMicrotasks only, but with other teams
+      // accidentally excluding microtasks, we don't want to assume a parent event will always exist
       'v8.execute',
-      'blink.console',
+
+      // For extracting UserTiming marks/measures
       'blink.user_timing',
-      'benchmark',
-      'loading',
-      'latencyInfo',
+
+      // Not mandatory but not used much
+      'blink.console',
+
+      // Most the events we need come in on these two
       'devtools.timeline',
       'disabled-by-default-devtools.timeline',
-      'disabled-by-default-devtools.timeline.frame',
+
+      // Up to 450 (https://goo.gl/rBfhn4) JPGs added to the trace
+      'disabled-by-default-devtools.screenshot',
+
+      // This doesn't add its own events, but adds a `stackTrace` property to devtools.timeline events
       'disabled-by-default-devtools.timeline.stack',
-      // Flipped off until bugs.chromium.org/p/v8/issues/detail?id=5820 is fixed in Stable
+
+      // CPU sampling profiler data only enabled for debugging purposes
       // 'disabled-by-default-v8.cpu_profiler',
       // 'disabled-by-default-v8.cpu_profiler.hires',
-      'disabled-by-default-devtools.screenshot',
     ];
   }
 
   /**
-   * @return {Promise<string>}
+   * @return {Promise<LH.Crdp.Browser.GetVersionResponse & {milestone: number}>}
    */
-  getUserAgent() {
-    // FIXME: use Browser.getVersion instead
-    return this.evaluateAsync('navigator.userAgent');
+  async getBrowserVersion() {
+    const status = {msg: 'Getting browser version', id: 'lh:gather:getVersion'};
+    log.time(status, 'verbose');
+    const version = await this.sendCommand('Browser.getVersion');
+    const match = version.product.match(/\/(\d+)/); // eg 'Chrome/71.0.3577.0'
+    const milestone = match ? parseInt(match[1]) : 0;
+    log.timeEnd(status);
+    return Object.assign(version, {milestone});
   }
 
   /**
    * Computes the ULTRADUMB™ benchmark index to get a rough estimate of device class.
    * @return {Promise<number>}
    */
-  getBenchmarkIndex() {
-    return this.evaluateAsync(`(${pageFunctions.ultradumbBenchmarkString})()`);
+  async getBenchmarkIndex() {
+    const status = {msg: 'Benchmarking machine', id: 'lh:gather:getBenchmarkIndex'};
+    log.time(status);
+    const indexVal = await this.evaluateAsync(`(${pageFunctions.ultradumbBenchmarkString})()`);
+    log.timeEnd(status);
+    return indexVal;
   }
 
   /**
    * @return {Promise<void>}
    */
-  connect() {
-    return this._connection.connect();
+  async connect() {
+    const status = {msg: 'Connecting to browser', id: 'lh:init:connect'};
+    log.time(status);
+    await this._connection.connect();
+    log.timeEnd(status);
   }
 
   /**
@@ -216,13 +259,25 @@ class Driver {
   }
 
   /**
+   * NOTE: This can eventually be replaced when TypeScript
+   * resolves https://github.com/Microsoft/TypeScript/issues/5453.
+   * @param {number} timeout
+   */
+  setNextProtocolTimeout(timeout) {
+    this._nextProtocolTimeout = timeout;
+  }
+
+  /**
    * Call protocol methods.
+   * To configure the timeout for the next call, use 'setNextProtocolTimeout'.
    * @template {keyof LH.CrdpCommands} C
    * @param {C} method
-   * @param {LH.CrdpCommands[C]['paramsType']} params,
+   * @param {LH.CrdpCommands[C]['paramsType']} params
    * @return {Promise<LH.CrdpCommands[C]['returnType']>}
    */
   sendCommand(method, ...params) {
+    const timeout = this._nextProtocolTimeout;
+    this._nextProtocolTimeout = DEFAULT_PROTOCOL_TIMEOUT;
     const domainCommand = /^(\w+)\.(enable|disable)$/.exec(method);
     if (domainCommand) {
       const enable = domainCommand[2] === 'enable';
@@ -230,8 +285,21 @@ class Driver {
         return Promise.resolve();
       }
     }
-
-    return this._connection.sendCommand(method, ...params);
+    return new Promise(async (resolve, reject) => {
+      const asyncTimeout = setTimeout((_ => {
+        const err = new LHError(LHError.errors.PROTOCOL_TIMEOUT);
+        err.message += ` Method: ${method}`;
+        reject(err);
+      }), timeout);
+      try {
+        const result = await this._connection.sendCommand(method, ...params);
+        clearTimeout(asyncTimeout);
+        resolve(result);
+      } catch (err) {
+        clearTimeout(asyncTimeout);
+        reject(err);
+      }
+    });
   }
 
   /**
@@ -281,61 +349,46 @@ class Driver {
    * @param {number|undefined} contextId
    * @return {Promise<*>}
    */
-  _evaluateInContext(expression, contextId) {
-    return new Promise((resolve, reject) => {
-      // If this gets to 60s and it hasn't been resolved, reject the Promise.
-      const asyncTimeout = setTimeout(
-        (_ => reject(new Error('The asynchronous expression exceeded the allotted time of 60s'))),
-        60000
-      );
+  async _evaluateInContext(expression, contextId) {
+    const evaluationParams = {
+      // We need to explicitly wrap the raw expression for several purposes:
+      // 1. Ensure that the expression will be a native Promise and not a polyfill/non-Promise.
+      // 2. Ensure that errors in the expression are captured by the Promise.
+      // 3. Ensure that errors captured in the Promise are converted into plain-old JS Objects
+      //    so that they can be serialized properly b/c JSON.stringify(new Error('foo')) === '{}'
+      expression: `(function wrapInNativePromise() {
+        const __nativePromise = window.__nativePromise || Promise;
+        const URL = window.__nativeURL || window.URL;
+        return new __nativePromise(function (resolve) {
+          return __nativePromise.resolve()
+            .then(_ => ${expression})
+            .catch(${pageFunctions.wrapRuntimeEvalErrorInBrowserString})
+            .then(resolve);
+        });
+      }())`,
+      includeCommandLineAPI: true,
+      awaitPromise: true,
+      returnByValue: true,
+      contextId,
+    };
 
-      const evaluationParams = {
-        // We need to explicitly wrap the raw expression for several purposes:
-        // 1. Ensure that the expression will be a native Promise and not a polyfill/non-Promise.
-        // 2. Ensure that errors in the expression are captured by the Promise.
-        // 3. Ensure that errors captured in the Promise are converted into plain-old JS Objects
-        //    so that they can be serialized properly b/c JSON.stringify(new Error('foo')) === '{}'
-        expression: `(function wrapInNativePromise() {
-          const __nativePromise = window.__nativePromise || Promise;
-          const URL = window.__nativeURL || window.URL;
-          return new __nativePromise(function (resolve) {
-            return __nativePromise.resolve()
-              .then(_ => ${expression})
-              .catch(${pageFunctions.wrapRuntimeEvalErrorInBrowserString})
-              .then(resolve);
-          });
-        }())`,
-        includeCommandLineAPI: true,
-        awaitPromise: true,
-        returnByValue: true,
-        contextId,
-      };
-
-      this.sendCommand('Runtime.evaluate', evaluationParams).then(response => {
-        clearTimeout(asyncTimeout);
-
-        if (response.exceptionDetails) {
-          // An error occurred before we could even create a Promise, should be *very* rare
-          return reject(new Error(`Evaluation exception: ${response.exceptionDetails.text}`));
-        }
-
-        // Protocol should always return a 'result' object, but it is sometimes undefined.  See #6026.
-        if (response.result === undefined) {
-          return reject(new Error('Runtime.evaluate response did not contain a "result" object'));
-        }
-
-        const value = response.result.value;
-
-        if (value && value.__failedInBrowser) {
-          return reject(Object.assign(new Error(), value));
-        } else {
-          resolve(value);
-        }
-      }).catch(err => {
-        clearTimeout(asyncTimeout);
-        reject(err);
-      });
-    });
+    this.setNextProtocolTimeout(60000);
+    const response = await this.sendCommand('Runtime.evaluate', evaluationParams);
+    if (response.exceptionDetails) {
+      // An error occurred before we could even create a Promise, should be *very* rare
+      return Promise.reject(new Error(`Evaluation exception: ${response.exceptionDetails.text}`));
+    }
+    // Protocol should always return a 'result' object, but it is sometimes undefined.  See #6026.
+    if (response.result === undefined) {
+      return Promise.reject(
+        new Error('Runtime.evaluate response did not contain a "result" object'));
+    }
+    const value = response.result.value;
+    if (value && value.__failedInBrowser) {
+      return Promise.reject(Object.assign(new Error(), value));
+    } else {
+      return value;
+    }
   }
 
   /**
@@ -451,6 +504,7 @@ class Driver {
    * @private
    */
   _waitForNetworkIdle(networkQuietThresholdMs) {
+    let hasDCLFired = false;
     /** @type {NodeJS.Timer|undefined} */
     let idleTimeout;
     /** @type {(() => void)} */
@@ -481,6 +535,7 @@ class Driver {
       };
 
       const domContentLoadedListener = () => {
+        hasDCLFired = true;
         if (networkStatusMonitor.is2Idle()) {
           onIdle();
         } else {
@@ -488,12 +543,37 @@ class Driver {
         }
       };
 
+      // We frequently need to debug why LH is still waiting for the page.
+      // This listener is added to all network events to verbosely log what URLs we're waiting on.
+      const logStatus = () => {
+        if (!hasDCLFired) {
+          log.verbose('Driver', 'Waiting on DomContentLoaded');
+          return;
+        }
+
+        const inflightRecords = networkStatusMonitor.getInflightRecords();
+        // If there are more than 20 inflight requests, load is still in full swing.
+        // Wait until it calms down a bit to be a little less spammy.
+        if (inflightRecords.length < 20) {
+          for (const record of inflightRecords) {
+            log.verbose('Driver', `Waiting on ${record.url.slice(0, 120)} to finish`);
+          }
+        }
+      };
+
+      networkStatusMonitor.on('requeststarted', logStatus);
+      networkStatusMonitor.on('requestloaded', logStatus);
+      networkStatusMonitor.on('network-2-busy', logStatus);
+
       this.once('Page.domContentEventFired', domContentLoadedListener);
       cancel = () => {
         idleTimeout && clearTimeout(idleTimeout);
         this.off('Page.domContentEventFired', domContentLoadedListener);
         networkStatusMonitor.removeListener('network-2-busy', onBusy);
         networkStatusMonitor.removeListener('network-2-idle', onIdle);
+        networkStatusMonitor.removeListener('requeststarted', logStatus);
+        networkStatusMonitor.removeListener('requestloaded', logStatus);
+        networkStatusMonitor.removeListener('network-2-busy', logStatus);
       };
     });
 
@@ -760,6 +840,7 @@ class Driver {
     // happen _after_ onload: https://crbug.com/768961
     this.sendCommand('Page.enable');
     this.sendCommand('Emulation.setScriptExecutionDisabled', {value: disableJS});
+    this.setNextProtocolTimeout(30 * 1000);
     this.sendCommand('Page.navigate', {url});
 
     if (waitForLoad) {
@@ -811,24 +892,34 @@ class Driver {
    * @param {number} [timeout]
    * @return {Promise<string>}
    */
-  getRequestContent(requestId, timeout = 1000) {
+  async getRequestContent(requestId, timeout = 1000) {
     requestId = NetworkRequest.getRequestIdForBackend(requestId);
 
-    return new Promise((resolve, reject) => {
-      // If this takes more than 1s, reject the Promise.
-      // Why? Encoding issues can lead to hanging getResponseBody calls: https://github.com/GoogleChrome/lighthouse/pull/4718
-      const err = new LHError(LHError.errors.REQUEST_CONTENT_TIMEOUT);
-      const asyncTimeout = setTimeout((_ => reject(err)), timeout);
+    // Encoding issues may lead to hanging getResponseBody calls: https://github.com/GoogleChrome/lighthouse/pull/4718
+    // driver.sendCommand will handle timeout after 1s.
+    this.setNextProtocolTimeout(timeout);
+    const result = await this.sendCommand('Network.getResponseBody', {requestId});
+    return result.body;
+  }
 
-      this.sendCommand('Network.getResponseBody', {requestId}).then(result => {
-        clearTimeout(asyncTimeout);
-        // Ignoring result.base64Encoded, which indicates if body is already encoded
-        resolve(result.body);
-      }).catch(e => {
-        clearTimeout(asyncTimeout);
-        reject(e);
-      });
+  async listenForSecurityStateChanges() {
+    this.on('Security.securityStateChanged', state => {
+      this._lastSecurityState = state;
     });
+    await this.sendCommand('Security.enable');
+  }
+
+  /**
+   * @return {LH.Crdp.Security.SecurityStateChangedEvent}
+   */
+  getSecurityState() {
+    if (!this._lastSecurityState) {
+      // happens if 'listenForSecurityStateChanges' is not called,
+      // or if some assumptions about the Security domain are wrong
+      throw new Error('Expected a security state.');
+    }
+
+    return this._lastSecurityState;
   }
 
   /**
@@ -919,10 +1010,19 @@ class Driver {
    * @param {{additionalTraceCategories?: string|null}=} settings
    * @return {Promise<void>}
    */
-  beginTrace(settings) {
+  async beginTrace(settings) {
     const additionalCategories = (settings && settings.additionalTraceCategories &&
         settings.additionalTraceCategories.split(',')) || [];
     const traceCategories = this._traceCategories.concat(additionalCategories);
+
+    // In Chrome <71, gotta use the chatty 'toplevel' cat instead of our own.
+    // TODO(COMPAT): Once m71 ships to stable, drop this section
+    const milestone = (await this.getBrowserVersion()).milestone;
+    if (milestone < 71) {
+      const toplevelIndex = traceCategories.indexOf('disabled-by-default-lighthouse');
+      traceCategories[toplevelIndex] = 'toplevel';
+    }
+
     const uniqueCategories = Array.from(new Set(traceCategories));
 
     // Check any domains that could interfere with or add overhead to the trace.
@@ -1108,9 +1208,13 @@ class Driver {
    * @return {Promise<void>}
    */
   async cacheNatives() {
-    await this.evaluateScriptOnNewDocument(`window.__nativePromise = Promise;
+    await this.evaluateScriptOnNewDocument(`
+        window.__nativePromise = Promise;
         window.__nativeError = Error;
-        window.__nativeURL = URL;`);
+        window.__nativeURL = URL;
+        window.__ElementMatches = Element.prototype.matches;
+        window.__perfNow = performance.now.bind(performance);
+    `);
   }
 
   /**
@@ -1142,17 +1246,16 @@ class Driver {
    * @return {Promise<void>}
    */
   async dismissJavaScriptDialogs() {
-    await this.sendCommand('Page.enable');
-
     this.on('Page.javascriptDialogOpening', data => {
       log.warn('Driver', `${data.type} dialog opened by the page automatically suppressed.`);
 
-      // rejection intentionally unhandled
       this.sendCommand('Page.handleJavaScriptDialog', {
         accept: true,
         promptText: 'Lighthouse prompt response',
-      });
+      }).catch(err => log.warn('Driver', err));
     });
+
+    await this.sendCommand('Page.enable');
   }
 }
 

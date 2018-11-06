@@ -358,7 +358,7 @@
 .lh-metric__innerwrap {
   display: flex;
   justify-content: space-between;
-  padding: 11px var(--text-indent);
+  padding: 8px var(--text-indent);
 }
 
 .lh-metric__details {
@@ -506,7 +506,7 @@
 .lh-filmstrip-container {
   padding: 0 var(--expandable-indent);
   /* smaller gap between metrics and filmstrip */
-  margin: -16px auto 0 auto;
+  margin: -8px auto 0 auto;
 }
 
 .lh-filmstrip {
@@ -905,7 +905,8 @@
 
 .lh-table-column--bytes,
 .lh-table-column--timespanMs,
-.lh-table-column--ms {
+.lh-table-column--ms,
+.lh-table-column--numeric {
   text-align: right;
 }
 
@@ -923,7 +924,7 @@
 /* 12% was determined to be a decent narrow width, but wide enough for column headings */
 .lh-table-column--url + th.lh-table-column--bytes,
 .lh-table-column--url + .lh-table-column--bytes + th.lh-table-column--bytes,
-.lh-table-column--url + .lh-table-column--ms, 
+.lh-table-column--url + .lh-table-column--ms,
 .lh-table-column--url + .lh-table-column--ms + th.lh-table-column--bytes,
 .lh-table-column--url + .lh-table-column--bytes + th.lh-table-column--timespanMs {
   width: 12%;
@@ -1036,6 +1037,7 @@
   z-index: 1;
   will-change: opacity;
   right: 0;
+  pointer-events: none;
 }
 
 .tooltip::before {
@@ -1053,5 +1055,5 @@
 @keyframes fadeInTooltip {
   0% { opacity: 0; }
   75% { opacity: 1; }
-  100% { opacity: 1;  filter: drop-shadow(1px 0px 1px #aaa) drop-shadow(0px 2px 4px hsla(206, 6%, 25%, 0.15)); }
+  100% { opacity: 1;  filter: drop-shadow(1px 0px 1px #aaa) drop-shadow(0px 2px 4px hsla(206, 6%, 25%, 0.15)); pointer-events: auto; }
 }

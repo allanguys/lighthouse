@@ -37,7 +37,7 @@ function wrapRuntimeEvalErrorInBrowser(err) {
  */
 /* istanbul ignore next */
 function registerPerformanceObserverInPage() {
-  window.____lastLongTask = window.performance.now();
+  window.____lastLongTask = window.__perfNow();
   const observer = new window.PerformanceObserver(entryList => {
     const entries = entryList.getEntries();
     for (const entry of entries) {
@@ -64,12 +64,12 @@ function registerPerformanceObserverInPage() {
 function checkTimeSinceLastLongTask() {
   // Wait for a delta before returning so that we're sure the PerformanceObserver
   // has had time to register the last longtask
-  return new Promise(resolve => {
-    const timeoutRequested = window.performance.now() + 50;
+  return new window.__nativePromise(resolve => {
+    const timeoutRequested = window.__perfNow() + 50;
 
     setTimeout(() => {
       // Double check that a long task hasn't happened since setTimeout
-      const timeoutFired = window.performance.now();
+      const timeoutFired = window.__perfNow();
       const timeSinceLongTask = timeoutFired - timeoutRequested < 50 ?
           timeoutFired - window.____lastLongTask : 0;
       resolve(timeSinceLongTask);
@@ -90,7 +90,7 @@ function getElementsInDocument(selector) {
   /** @param {NodeListOf<Element>} nodes */
   const _findAllElements = nodes => {
     for (let i = 0, el; el = nodes[i]; ++i) {
-      if (!selector || el.matches(selector)) {
+      if (!selector || window.__ElementMatches.call(el, selector)) {
         results.push(el);
       }
       // If the element has a shadow root, dig deeper.
@@ -111,7 +111,7 @@ function getElementsInDocument(selector) {
  * @return {string}
  */
 /* istanbul ignore next */
-function getOuterHTMLSnippet(element, ignoreAttrs=[]) {
+function getOuterHTMLSnippet(element, ignoreAttrs = []) {
   const clone = element.cloneNode();
 
   ignoreAttrs.forEach(attribute =>{
@@ -149,7 +149,7 @@ function ultradumbBenchmark() {
   }
 
   const durationInSeconds = (Date.now() - start) / 1000;
-  return iterations / durationInSeconds;
+  return Math.round(iterations / durationInSeconds);
 }
 
 module.exports = {

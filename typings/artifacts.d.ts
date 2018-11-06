@@ -15,7 +15,7 @@ type LanternSimulator = InstanceType<typeof _LanternSimulator>;
 
 declare global {
   module LH {
-    export interface Artifacts extends BaseArtifacts, GathererArtifacts, ComputedArtifacts {}
+    export interface Artifacts extends BaseArtifacts, GathererArtifacts {}
 
     /** Artifacts always created by GatherRunner. */
     export interface BaseArtifacts {
@@ -37,6 +37,8 @@ declare global {
       settings: Config.Settings;
       /** The URL initially requested and the post-redirects URL that was actually loaded. */
       URL: {requestedUrl: string, finalUrl: string};
+      /** The timing instrumentation of the gather portion of a run. */
+      Timing: Artifacts.MeasureEntry[];
     }
 
     /**
@@ -117,37 +119,6 @@ declare global {
       Viewport: string|null;
       /** The dimensions and devicePixelRatio of the loaded viewport. */
       ViewportDimensions: Artifacts.ViewportDimensions;
-      /** WebSQL database information for the page or null if none was found. */
-      WebSQL: Crdp.Database.Database | null;
-    }
-
-    export interface ComputedArtifacts {
-      requestCriticalRequestChains(data: {devtoolsLog: DevtoolsLog, URL: Artifacts['URL']}): Promise<Artifacts.CriticalRequestNode>;
-      requestLoadSimulator(data: {devtoolsLog: DevtoolsLog, settings: Config.Settings}): Promise<LanternSimulator>;
-      requestMainResource(data: {devtoolsLog: DevtoolsLog, URL: Artifacts['URL']}): Promise<Artifacts.NetworkRequest>;
-      requestNetworkAnalysis(devtoolsLog: DevtoolsLog): Promise<LH.Artifacts.NetworkAnalysis>;
-      requestNetworkRecords(devtoolsLog: DevtoolsLog): Promise<Artifacts.NetworkRequest[]>;
-      requestPageDependencyGraph(data: {trace: Trace, devtoolsLog: DevtoolsLog}): Promise<Gatherer.Simulation.GraphNode>;
-      requestPushedRequests(devtoolsLogs: DevtoolsLog): Promise<Artifacts.NetworkRequest[]>;
-      requestMainThreadTasks(trace: Trace): Promise<Artifacts.TaskNode[]>;
-      requestTraceOfTab(trace: Trace): Promise<Artifacts.TraceOfTab>;
-      requestSpeedline(trace: Trace): Promise<LH.Artifacts.Speedline>;
-
-      // Metrics.
-      requestInteractive(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric|Artifacts.Metric>;
-      requestEstimatedInputLatency(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric|Artifacts.Metric>;
-      requestFirstContentfulPaint(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric|Artifacts.Metric>;
-      requestFirstCPUIdle(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric|Artifacts.Metric>;
-      requestFirstMeaningfulPaint(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric|Artifacts.Metric>;
-      requestSpeedIndex(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric|Artifacts.Metric>;
-
-      // Lantern metrics.
-      requestLanternInteractive(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric>;
-      requestLanternEstimatedInputLatency(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric>;
-      requestLanternFirstContentfulPaint(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric>;
-      requestLanternFirstCPUIdle(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric>;
-      requestLanternFirstMeaningfulPaint(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric>;
-      requestLanternSpeedIndex(data: LH.Artifacts.MetricComputationDataInput): Promise<Artifacts.LanternMetric>;
     }
 
     module Artifacts {
@@ -219,12 +190,12 @@ declare global {
           fontSize: number;
           textLength: number;
           node: FontSize.DomNodeWithParent;
-          cssRule: {
+          cssRule?: {
             type: 'Regular' | 'Inline' | 'Attributes';
-            range: {startLine: number, startColumn: number};
-            parentRule: {origin: Crdp.CSS.StyleSheetOrigin, selectors: {text: string}[]};
-            styleSheetId: string;
-            stylesheet: Crdp.CSS.CSSStyleSheetHeader;
+            range?: {startLine: number, startColumn: number};
+            parentRule?: {origin: Crdp.CSS.StyleSheetOrigin, selectors: {text: string}[]};
+            styleSheetId?: string;
+            stylesheet?: Crdp.CSS.CSSStyleSheetHeader;
           }
         }>
       }
@@ -233,6 +204,10 @@ declare global {
         export interface DomNodeWithParent extends Crdp.DOM.Node {
           parentId: number;
           parentNode: DomNodeWithParent;
+        }
+
+        export interface DomNodeMaybeWithParent extends Crdp.DOM.Node {
+          parentNode?: DomNodeMaybeWithParent;
         }
       }
 
@@ -331,6 +306,11 @@ declare global {
         }[];
       }
 
+      export interface MeasureEntry extends PerformanceEntry {
+        /** Whether timing entry was collected during artifact gathering. */
+        gather?: boolean;
+      }
+
       export interface MetricComputationDataInput {
         devtoolsLog: DevtoolsLog;
         trace: Trace;
@@ -386,8 +366,8 @@ declare global {
         processEvents: Array<TraceEvent>;
         /** The subset of trace events from the page's main thread, sorted by timestamp. */
         mainThreadEvents: Array<TraceEvent>;
-        /** The event marking the start of tracing in the target browser. */
-        startedInPageEvt: TraceEvent;
+        /** IDs for the trace's main frame, process, and thread. */
+        mainFrameIds: {pid: number, tid: number, frameId: string};
         /** The trace event marking navigationStart. */
         navigationStartEvt: TraceEvent;
         /** The trace event marking firstPaint, if it was found. */
