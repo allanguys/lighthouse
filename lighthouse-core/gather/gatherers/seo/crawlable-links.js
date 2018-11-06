@@ -28,7 +28,9 @@ class CrawlableLinks extends Gatherer {
           href: node.href instanceof SVGAnimatedString ?
             resolveURLOrNull(node.href.baseVal) :
             node.href,
-          text: node.innerText || '',
+          text: node.href instanceof SVGAnimatedString ?
+            node.textContent :
+            node.innerText,
         }));
     })()`;
 
